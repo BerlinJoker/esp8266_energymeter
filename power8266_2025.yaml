@@ -1,0 +1,123 @@
+esphome:
+  name: power8266
+
+esp8266:
+  board: d1_mini
+  #framework:
+  #  type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  password: ""
+
+ota:
+  - platform: esphome
+    password: ""
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Power8266 Fallback Hotspot"
+    password: !secret ap_password
+
+captive_portal:
+
+
+
+
+globals:
+  - id: total_e_pulses
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: total_g_pulses
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: lastpulse
+    type: float
+    restore_value: false
+    initial_value: '0'
+  - id: rotationtime
+    type: float
+    restore_value: false
+    initial_value: '0'
+    
+    
+    
+    
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    on_time_sync:
+      then:
+        - lambda: |-
+            id(lastpulse) = millis();
+        # to avoid fake spikes in the rotationtime calculation when esphome pulls an updated time from HA
+            
+
+binary_sensor:
+  - platform: gpio
+    id: electro_pulse_counter
+    pin: GPIO12
+    filters:
+      - invert: 
+      - delayed_on: 200ms #might need adjustment based on your meter and the TCRT5000 position and calibration
+    on_press:
+      then:
+        - lambda: |- 
+            id(total_e_pulses) += 1;
+            id(rotationtime) = (millis() - id(lastpulse)) / 1000;
+            id(lastpulse) = millis();
+  - platform: gpio
+    id: gas_pulse_counter
+    pin: GPIO5
+    filters:
+      - delayed_on: 500ms #might need adjustment based on your meter and the TCRT5000 position and calibration
+    on_press:
+      then:
+        - lambda: id(total_g_pulses) += 1;
+        
+sensor:
+  - platform: template
+    name: "Gas usage"
+    device_class: gas
+    unit_of_measurement: "m³"
+    state_class: "total_increasing"
+    icon: "mdi:fire"
+    accuracy_decimals: 2
+    lambda: |-
+        return id(total_g_pulses) * 0.01;
+  - platform: template
+    name: "Power usage"
+    device_class: energy
+    unit_of_measurement: "kWh"
+    state_class: "total_increasing"
+    icon: "mdi:flash"
+    accuracy_decimals: 2
+    lambda: |-
+        return id(total_e_pulses) * 0.0026666666666667;
+    # multiplication factor depending on number of revolutions per kWh, in this case for 375 per kWh
+  - platform: template
+    name: "rotation time"
+    unit_of_measurement: "s"
+    update_interval: 30s
+    lambda: |-
+      return id(rotationtime);
+  - platform: template
+    name: "current watt"
+    device_class: "power"
+    unit_of_measurement: "W"
+    update_interval: 30s
+    accuracy_decimals: 0
+    lambda: |-
+      return 9600 / id(rotationtime);
+    # factor needs to be calculated and adjusted based on revolutions per kWh, in this case for 375 kWh
+    # potential enhancement: realitycheck for the value, in case something with the sensor is wrong. E.g. if the Watt value is higher than 15000 => ignore
